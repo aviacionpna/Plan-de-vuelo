@@ -460,6 +460,7 @@ a.btn{display:inline-flex;align-items:center;text-decoration:none;color:var(--in
       <input id="cSearch" type="text" class="up" placeholder="BUSCAR POR OACI O NOMBRE" autocomplete="off">
       <button type="button" class="primary" id="cAdd">Agregar contacto</button>
     </div>
+    <div class="hint" id="cShared" style="margin:-4px 0 8px"></div>
     <div class="chips" id="cChips" style="margin:-4px 0 12px"></div>
     <div id="cForm" hidden class="grp" style="margin-top:0;border-top:0;padding-top:0;margin-bottom:14px">
       <div class="row">
@@ -482,9 +483,11 @@ a.btn{display:inline-flex;align-items:center;text-decoration:none;color:var(--in
         <div class="hint">Una l&#237;nea por aer&#243;dromo, separando con punto y coma: OACI; nombre; correo; tel&#233;fono; nota. Importar reemplaza los que tengan el mismo OACI en esta lista.</div>
         <textarea id="cImport" class="plain" rows="5" placeholder="SADF; San Fernando; aro@ejemplo.com.ar; +54 11 0000-0000; fuente y fecha"></textarea>
         <div class="padrow" style="margin-top:0"><button type="button" class="small" id="cDoImport">Importar</button><button type="button" class="small" id="cDoExport">Copiar la lista de esta secci&#243;n</button></div>
+        <div class="hint">Para actualizar la lista de todos los usuarios: copi&#225; el archivo completo y pegalo en contactos.json del repositorio.</div>
+        <div class="padrow" style="margin-top:0"><button type="button" class="small" id="cDoJson">Copiar contactos.json completo</button></div>
       </div>
     </details>
-    <div class="note" style="margin:12px 0 0">Los datos iniciales salen del AIP Argentina de ANAC y cada ficha indica su vigencia. Hay unos 15 aer&#243;dromos, la mayor&#237;a con datos de 2018 a 2019, y el AIP no trae mails de ARO/AIS (salvo alguno) ni datos de PSA. Verific&#225; cada dato con la fuente oficial antes de usarlo, y correg&#237; o agreg&#225; lo que necesites. Se guardan solo en este dispositivo.</div>
+    <div class="note" style="margin:12px 0 0">Los datos iniciales salen del AIP Argentina de ANAC y cada ficha indica su vigencia. Hay unos 15 aer&#243;dromos, la mayor&#237;a con datos de 2018 a 2019, y el AIP no trae mails de ARO/AIS (salvo alguno) ni datos de PSA. Verific&#225; cada dato con la fuente oficial antes de usarlo, y correg&#237; o agreg&#225; lo que necesites. La lista base es com&#250;n para todos y se actualiza sola cuando se publica una nueva; lo que corrijas o agregues vos queda solo en este dispositivo.</div>
   </section>
 </div>
 <div class="toast" id="toast" hidden></div>
@@ -944,17 +947,62 @@ var PSA_DEFAULTS=[{"icao": "SAEZ", "name": "EZEIZA", "email": "fboezeiza@psa.gob
 AIP_DEFAULTS.psa=JSON.parse(JSON.stringify(PSA_DEFAULTS));
 var PSA_EXTRA=["uospcnd@psa.gob.ar", "metro_terminalsur@psa.gob.ar", "uoepa@psa.gob.ar", "uosis@psa.gov.ar", "uolib@psa.gov.ar", "uodry@psa.gov.ar", "uojua@psa.gov.ar", "uosvo@psa.gov.ar", "uoosa@psa.gov.ar", "uotrh@psa.gov.ar", "turnorgl@psa.gob.ar", "uogra@psa.gov.ar"];
 var CT_NAMES={aro:"ARO/AIS",jefe:"Jefe de aer\u00f3dromo",psa:"PSA"}, ctType="aro", editingC=null, armedC=null;
-function contacts(){
-  var c=lsGet("fpl.contacts");
-  if(!c||typeof c!=="object")c=JSON.parse(JSON.stringify(AIP_DEFAULTS));
-  ["aro","jefe","psa"].forEach(function(k){if(!Array.isArray(c[k]))c[k]=[]});
-  if(lsGet("fpl.psaSeed")!=="1"){
-    PSA_DEFAULTS.forEach(function(d){if(!c.psa.some(function(x){return x.icao===d.icao}))c.psa.push(JSON.parse(JSON.stringify(d)))});
-    lsSet("fpl.psaSeed","1"); lsSet("fpl.contacts",c);
-  }
-  return c;
+var SHARED=JSON.parse(JSON.stringify(AIP_DEFAULTS)), SHARED_INFO={src:"incluida en la app",updated:""}, CKEYS=["aro","jefe","psa"];
+function findRec(arr,icao){for(var i=0;i<arr.length;i++)if(arr[i].icao===icao)return arr[i];return null}
+function sameRec(a,b){return ["name","email","phone","note"].every(function(f){return String(a[f]||"")===String(b[f]||"")})}
+function cp(o){return JSON.parse(JSON.stringify(o))}
+function validShared(j){return !!j&&typeof j==="object"&&CKEYS.every(function(k){return Array.isArray(j[k])})}
+function applyShared(j,src){
+  CKEYS.forEach(function(k){SHARED[k]=j[k].filter(function(r){return r&&/^[A-Z]{4}$/.test(r.icao||"")}).map(function(r){return {icao:r.icao,name:String(r.name||""),email:String(r.email||""),phone:String(r.phone||""),note:String(r.note||"")}})});
+  if(Array.isArray(j.psa_extra))PSA_EXTRA=j.psa_extra.filter(function(m){return typeof m==="string"&&m});
+  SHARED_INFO={src:src,updated:String(j.updated||"")};
 }
-function saveContacts(c){lsSet("fpl.contacts",c);sendKey=""}
+(function(){var c=lsGet("fpl.cShared"); if(validShared(c))applyShared(c,"copia guardada en este dispositivo")})();
+function loadShared(){
+  if(typeof fetch!=="function"||!/^https?:$/.test(location.protocol))return;
+  fetch("contactos.json?t="+Date.now(),{cache:"no-store"}).then(function(r){if(!r.ok)throw 0;return r.json()}).then(function(j){
+    if(!validShared(j))return;
+    applyShared(j,"descargada de la web"); lsSet("fpl.cShared",j); sendKey="";
+    if(!$("page-contacts").hidden)renderContacts();
+    if(!$("page-fdg").hidden)fFillPsa();
+    schedule();
+  }).catch(function(){});
+}
+/* Una sola vez: pasa la copia completa que se guardaba antes a "solo lo que cambi\u00f3 el usuario". */
+function migrateContacts(){
+  if(lsGet("fpl.cMig")==="2")return;
+  var old=lsGet("fpl.contacts"), ov={aro:[],jefe:[],psa:[]}, dl={aro:[],jefe:[],psa:[]};
+  if(old&&typeof old==="object"){
+    CKEYS.forEach(function(k){
+      var arr=Array.isArray(old[k])?old[k]:[], emb=AIP_DEFAULTS[k];
+      arr.forEach(function(r){var e=findRec(emb,r.icao); if(!e||!sameRec(e,r))ov[k].push(r)});
+      if(k==="psa"&&lsGet("fpl.psaSeed")!=="1")return;
+      emb.forEach(function(e){if(!findRec(arr,e.icao))dl[k].push(e.icao)});
+    });
+  }
+  lsSet("fpl.cOver",ov); lsSet("fpl.cDel",dl); lsSet("fpl.cMig","2");
+}
+function contacts(){
+  migrateContacts();
+  var ov=lsGet("fpl.cOver")||{}, dl=lsGet("fpl.cDel")||{}, out={};
+  CKEYS.forEach(function(k){
+    var o=Array.isArray(ov[k])?ov[k]:[], d=Array.isArray(dl[k])?dl[k]:[];
+    var res=SHARED[k].filter(function(r){return d.indexOf(r.icao)<0&&!findRec(o,r.icao)}).map(cp);
+    o.forEach(function(r){res.push(cp(r))});
+    out[k]=res;
+  });
+  return out;
+}
+function saveContacts(c){
+  var ov={}, dl={};
+  CKEYS.forEach(function(k){
+    var arr=c[k]||[]; ov[k]=[]; dl[k]=[];
+    arr.forEach(function(r){var e=findRec(SHARED[k],r.icao); if(!e||!sameRec(e,r))ov[k].push(r)});
+    SHARED[k].forEach(function(e){if(!findRec(arr,e.icao))dl[k].push(e.icao)});
+  });
+  lsSet("fpl.cOver",ov); lsSet("fpl.cDel",dl); lsSet("fpl.cMig","2"); sendKey="";
+}
+function ownState(k,r){var e=findRec(SHARED[k],r.icao); return !e?"add":(sameRec(e,r)?"":"mod")}
 function renderChips(){
   var d=collect(), seen={}, box=$("cChips"); box.innerHTML="";
   [["dep","Salida"],["dest","Destino"],["altn","Alternativa"],["altn2","2\u00aa alt."]].forEach(function(p){
@@ -978,6 +1026,7 @@ function renderContacts(){
   var q=clean($("cSearch").value.trim());
   var list=all.filter(function(r){return !q||(r.icao+" "+r.name).indexOf(q)>=0});
   var box=$("cList"); box.innerHTML="";
+  $("cShared").textContent="Lista compartida: "+(SHARED_INFO.updated?"actualizada el "+fmtDate(SHARED_INFO.updated)+", ":"")+"fuente: "+SHARED_INFO.src+".";
   if(ctType==="psa"&&!q){
     var xb=el("div","card"), xm=el("div","main"); xm.appendChild(el("div","code","Otros correos PSA"));
     xm.appendChild(el("div","meta src","Direcciones de la lista PSA que no tra\u00eda el OACI en el video. Si sab\u00e9s a qu\u00e9 aer\u00f3dromo corresponde cada una, cargala con \"Agregar contacto\"."));
@@ -988,9 +1037,11 @@ function renderContacts(){
   if(!list.length){box.appendChild(el("div","empty","Ning\u00fan aer\u00f3dromo coincide en "+CT_NAMES[ctType]+". Pod\u00e9s agregarlo con \"Agregar contacto\"."));return}
   list.forEach(function(r){
     var c=el("div","card"), m=el("div","main");
-    var t=el("div","code",r.icao); if(r.name)t.appendChild(el("span","tagf",r.name)); m.appendChild(t);
+    var t=el("div","code",r.icao); if(r.name)t.appendChild(el("span","tagf",r.name));
+    var os=ownState(ctType,r); if(os)t.appendChild(el("span","tagf",os==="add"?"agregado por vos":"modificado por vos")); m.appendChild(t);
     contactLines(m,r);
     var a=el("div","acts"); a.appendChild(btn("Editar",function(){openCForm(r)}));
+    if(os==="mod")a.appendChild(btn("Volver al compartido",function(){var cc=contacts(),e=findRec(SHARED[ctType],r.icao);cc[ctType]=cc[ctType].filter(function(x){return x.icao!==r.icao});cc[ctType].push(cp(e));saveContacts(cc);renderContacts();toast("Se restaur\u00f3 el dato compartido.")}));
     var key=ctType+r.icao;
     a.appendChild(btn(armedC===key?"\u00bfSeguro? Quitar":"Quitar",function(){
       if(armedC===key){var cc=contacts();cc[ctType]=cc[ctType].filter(function(x){return x.icao!==r.icao});saveContacts(cc);armedC=null;renderContacts();toast("Contacto quitado.")}
@@ -1033,6 +1084,17 @@ $("cDoExport").addEventListener("click",function(){
   var a=contacts()[ctType].slice().sort(function(x,y){return x.icao<y.icao?-1:1});
   if(!a.length){toast("No hay nada para copiar en esta secci\u00f3n.");return}
   copyText(a.map(function(r){return [r.icao,r.name,r.email,r.phone,r.note||""].join("; ")}).join("\n"),"La lista");
+});
+
+$("cDoJson").addEventListener("click",function(){
+  var c=contacts(), d=new Date(), pad2=function(n){return (n<10?"0":"")+n};
+  var out='{\n "updated": '+JSON.stringify(d.getFullYear()+"-"+pad2(d.getMonth()+1)+"-"+pad2(d.getDate()))+',\n';
+  CKEYS.forEach(function(k){
+    var a=c[k].slice().sort(function(x,y){return x.icao<y.icao?-1:1});
+    out+=' "'+k+'": [\n'+a.map(function(r){return "  "+JSON.stringify({icao:r.icao,name:r.name||"",email:r.email||"",phone:r.phone||"",note:r.note||""})}).join(",\n")+'\n ],\n';
+  });
+  out+=' "psa_extra": [\n'+PSA_EXTRA.map(function(m){return "  "+JSON.stringify(m)}).join(",\n")+'\n ]\n}\n';
+  copyText(out,"contactos.json");
 });
 
 /* ARO/AIS del aer\u00f3dromo de salida y de destino, junto a la vista previa */
@@ -1342,6 +1404,7 @@ renderFleet();renderFavs();fillSelects();fApply();
 try{localStorage.removeItem("fpl.last");localStorage.removeItem("fpl.sig")}catch(e){}
 apply(BLANK);
 loadFont();schedule();
+loadShared();
 window.__appOk=1;
 })();
 </script>
